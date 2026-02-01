@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  name              String?
+  avatarUrl         String?
+  stripeCustomerId  String?   @map("stripe_customer_id")
+  plan              Plan      @default(STARTER)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  instances   Instance[]
+  apiKeys     ApiKey[]
+
+  @@map("users")
+}
+
+model Instance {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String         @map("user_id") @db.Uuid
+  railwayProjectId String?        @map("railway_project_id")
+  status           InstanceStatus @default(PROVISIONING)
+  gatewayUrl       String?        @map("gateway_url")
+  gatewayToken     String?        @map("gateway_token")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  lastHealthCheck  DateTime?      @map("last_health_check")
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  installedKits InstalledKit[]
+  channels      Channel[]
+  usageLogs     UsageLog[]
+
+  @@map("instances")
+}
+
+model InstalledKit {
+  id          String   @id @default(uuid()) @db.Uuid
+  instanceId  String   @map("instance_id") @db.Uuid
+  kitId       String   @map("kit_id")
+  config      Json     @default("{}")
+  installedAt DateTime @default(now()) @map("installed_at")
+  active      Boolean  @default(true)
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("installed_kits")
+}
+
+model ApiKey {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @map("user_id") @db.Uuid
+  provider     AiProvider
+  encryptedKey String      @map("encrypted_key")
+  label        String?
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Channel {
+  id          String        @id @default(uuid()) @db.Uuid
+  instanceId  String        @map("instance_id") @db.Uuid
+  type        ChannelType
+  config      Json          @default("{}")
+  status      ChannelStatus @default(DISCONNECTED)
+  connectedAt DateTime?     @map("connected_at")
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("channels")
+}
+
+model UsageLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  instanceId   String   @map("instance_id") @db.Uuid
+  date         DateTime @db.Date
+  messagesSent Int      @default(0) @map("messages_sent")
+  tokensUsed   Int      @default(0) @map("tokens_used")
+  estimatedCost Decimal @default(0) @map("estimated_cost") @db.Decimal(10, 4)
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, date])
+  @@map("usage_logs")
+}
+
+enum Plan {
+  STARTER
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+enum InstanceStatus {
+  PROVISIONING
+  RUNNING
+  STOPPED
+  ERROR
+}
+
+enum AiProvider {
+  ANTHROPIC
+  OPENAI
+  OPENROUTER
+}
+
+enum ChannelType {
+  TELEGRAM
+  WHATSAPP
+  DISCORD
+  SLACK
+}
+
+enum ChannelStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
