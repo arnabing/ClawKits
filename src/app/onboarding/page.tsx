@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KITS } from "@/lib/kits";
@@ -13,6 +13,7 @@ const STEPS = [
   { title: "Connect AI Provider", description: "Choose your preferred AI model provider and add your API key." },
   { title: "Connect Messaging Channel", description: "Choose where your agent will send and receive messages." },
   { title: "Customize Your Kit", description: "Fine-tune your kit to match your preferences." },
+  { title: "Launching Your Agent", description: "We're setting everything up for you. This only happens once." },
 ];
 
 const PROVIDERS = [
@@ -28,6 +29,17 @@ const CHANNELS = [
   { id: "slack", name: "Slack", description: "Integrates with your workspace", recommended: false, easiest: false },
 ] as const;
 
+// Provisioning sub-steps for the launch stage
+const PROVISIONING_STAGES = [
+  { id: "instance", label: "Provisioning your OpenClaw instance", duration: 3000 },
+  { id: "kit", label: "Installing kit configuration", duration: 2000 },
+  { id: "provider", label: "Connecting AI provider", duration: 1500 },
+  { id: "channel", label: "Linking messaging channel", duration: 2000 },
+  { id: "health", label: "Running health check", duration: 1500 },
+] as const;
+
+type ProvisionStatus = "pending" | "active" | "done" | "error";
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
@@ -38,6 +50,11 @@ export default function OnboardingPage() {
   const [validating, setValidating] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<string>("telegram");
   const [kitConfig, setKitConfig] = useState<Record<string, unknown>>({});
+
+  // Provisioning state
+  const [provisionStatuses, setProvisionStatuses] = useState<Record<string, ProvisionStatus>>({});
+  const [provisionComplete, setProvisionComplete] = useState(false);
+  const [provisionError, setProvisionError] = useState<string | null>(null);
 
   function initKitConfig(kit: Kit) {
     const config: Record<string, unknown> = {};
@@ -70,21 +87,23 @@ export default function OnboardingPage() {
         return selectedChannel !== "";
       case 3:
         return true;
+      case 4:
+        return provisionComplete;
       default:
         return false;
     }
   }
 
   function handleContinue() {
-    if (currentStep < 3) {
+    if (currentStep < 4) {
       setCurrentStep(currentStep + 1);
-    } else {
+    } else if (provisionComplete) {
       router.push("/dashboard");
     }
   }
 
   function handleBack() {
-    if (currentStep > 0) {
+    if (currentStep > 0 && currentStep < 4) {
       setCurrentStep(currentStep - 1);
     }
   }
@@ -92,6 +111,50 @@ export default function OnboardingPage() {
   function updateConfig(key: string, value: unknown) {
     setKitConfig((prev) => ({ ...prev, [key]: value }));
   }
+
+  // ── Provisioning logic ──────────────────────────────────────────
+
+  const runProvisioning = useCallback(async () => {
+    // Initialize all statuses to pending
+    const initial: Record<string, ProvisionStatus> = {};
+    for (const stage of PROVISIONING_STAGES) {
+      initial[stage.id] = "pending";
+    }
+    setProvisionStatuses(initial);
+    setProvisionError(null);
+    setProvisionComplete(false);
+
+    // Run each stage sequentially
+    for (const stage of PROVISIONING_STAGES) {
+      setProvisionStatuses((prev) => ({ ...prev, [stage.id]: "active" }));
+
+      try {
+        // In production, each stage calls the real API:
+        // - "instance": POST /api/instances (creates Railway project)
+        // - "kit": POST /api/kits (installs kit on instance)
+        // - "provider": POST /api/instances/:id/provider (configures AI provider)
+        // - "channel": POST /api/channels (connects messaging channel)
+        // - "health": GET /api/instances/:id (checks health)
+        //
+        // For now, simulate each stage with a delay
+        await new Promise((resolve) => setTimeout(resolve, stage.duration));
+
+        setProvisionStatuses((prev) => ({ ...prev, [stage.id]: "done" }));
+      } catch {
+        setProvisionStatuses((prev) => ({ ...prev, [stage.id]: "error" }));
+        setProvisionError(`Failed at: ${stage.label}. Please try again.`);
+        return;
+      }
+    }
+
+    setProvisionComplete(true);
+  }, []);
+
+  useEffect(() => {
+    if (currentStep === 4) {
+      runProvisioning();
+    }
+  }, [currentStep, runProvisioning]);
 
   // ── Step renderers ──────────────────────────────────────────────
 
@@ -439,7 +502,117 @@ export default function OnboardingPage() {
     );
   }
 
-  const stepRenderers = [renderStepOne, renderStepTwo, renderStepThree, renderStepFour];
+  function renderStepFive() {
+    const providerName = PROVIDERS.find((p) => p.id === selectedProvider)?.name ?? selectedProvider;
+    const channelName = CHANNELS.find((c) => c.id === selectedChannel)?.name ?? selectedChannel;
+
+    return (
+      <div className="mx-auto max-w-lg space-y-8">
+        {/* Summary card */}
+        <div className="rounded-xl border border-surface-700 bg-surface-800 p-5">
+          <h3 className="mb-3 text-sm font-semibold text-surface-100">Setup Summary</h3>
+          <div className="space-y-2 text-xs text-surface-400">
+            <div className="flex justify-between">
+              <span>Kit</span>
+              <span className="font-medium text-surface-200">{selectedKit?.name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>AI Provider</span>
+              <span className="font-medium text-surface-200">{providerName}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Channel</span>
+              <span className="font-medium text-surface-200">{channelName}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Provisioning progress */}
+        <div className="space-y-4">
+          {PROVISIONING_STAGES.map((stage) => {
+            const status = provisionStatuses[stage.id] ?? "pending";
+            return (
+              <div key={stage.id} className="flex items-center gap-4">
+                {/* Status indicator */}
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+                  {status === "pending" && (
+                    <div className="h-3 w-3 rounded-full bg-surface-700" />
+                  )}
+                  {status === "active" && (
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
+                  )}
+                  {status === "done" && (
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600">
+                      <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  )}
+                  {status === "error" && (
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-red-600">
+                      <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+
+                {/* Label */}
+                <span
+                  className={`text-sm transition-colors ${
+                    status === "done"
+                      ? "text-surface-200"
+                      : status === "active"
+                        ? "font-medium text-white"
+                        : status === "error"
+                          ? "text-red-400"
+                          : "text-surface-500"
+                  }`}
+                >
+                  {stage.label}
+                  {status === "active" && (
+                    <span className="ml-1 text-surface-500">...</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Error state */}
+        {provisionError && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+            <p className="text-sm text-red-400">{provisionError}</p>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-3"
+              onClick={runProvisioning}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {/* Success state */}
+        {provisionComplete && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600">
+              <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-bold text-white">Your Agent is Live!</h3>
+            <p className="mt-1 text-sm text-surface-400">
+              {selectedKit?.name} is running and connected to {channelName}. Head to your dashboard to see it in action.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const stepRenderers = [renderStepOne, renderStepTwo, renderStepThree, renderStepFour, renderStepFive];
 
   // ── Main render ─────────────────────────────────────────────────
 
@@ -447,7 +620,7 @@ export default function OnboardingPage() {
     <div className="flex min-h-screen flex-col bg-surface-950">
       {/* Progress bar */}
       <div className="border-b border-surface-800 bg-surface-900">
-        <div className="mx-auto max-w-3xl px-6 py-6">
+        <div className="mx-auto max-w-4xl px-6 py-6">
           <div className="flex items-center justify-between">
             {STEPS.map((step, i) => (
               <div key={step.title} className="flex items-center">
@@ -479,7 +652,7 @@ export default function OnboardingPage() {
                 </div>
                 {i < STEPS.length - 1 && (
                   <div
-                    className={`mx-3 hidden h-px w-12 sm:block lg:w-20 ${
+                    className={`mx-3 hidden h-px w-10 sm:block lg:w-16 ${
                       i < currentStep ? "bg-brand-600" : "bg-surface-700"
                     }`}
                   />
@@ -514,7 +687,7 @@ export default function OnboardingPage() {
           <Button
             variant="ghost"
             onClick={handleBack}
-            disabled={currentStep === 0}
+            disabled={currentStep === 0 || currentStep === 4}
           >
             Back
           </Button>
@@ -526,7 +699,13 @@ export default function OnboardingPage() {
             onClick={handleContinue}
             disabled={!canContinue()}
           >
-            {currentStep === 3 ? "Launch Your Agent" : "Continue"}
+            {currentStep === 3
+              ? "Launch Your Agent"
+              : currentStep === 4
+                ? provisionComplete
+                  ? "Go to Dashboard"
+                  : "Setting Up..."
+                : "Continue"}
           </Button>
         </div>
       </div>
